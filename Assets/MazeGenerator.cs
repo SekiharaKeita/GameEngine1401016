@@ -6,10 +6,10 @@ using System.Linq;
 public class MazeQLearningAI : MonoBehaviour
 {
     public int mazeSize = 5;  // 初期迷路サイズ（5×5）
-    public float learningRate = 0.1f;
-    public float discountFactor = 0.9f;
-    public float explorationRate = 1.0f;
-    public float explorationDecay = 0.995f;
+    public float learningRate = 0.1f;       // 学習率(0.1(10%)は新しい情報、残りの0.9(90%)はこれまでの情報を反映する)
+    public float discountFactor = 0.9f;     // 割引率(将来の報酬をどの程度重視するか。1に近いと将来的な報酬を重視し、長期的な利益を追求する)
+    public float explorationRate = 1.0f;    // 探索率(1.0の場合完全にランダム。0の場合常に現在の最良の選択肢を選ぶ)
+    public float explorationDecay = 0.95f; // 探索率の減衰(explorationRateの値の減衰)
 
     private int[,] maze;
     private float[,,] qTable;
@@ -38,7 +38,11 @@ public class MazeQLearningAI : MonoBehaviour
         while (true)
         {
             GenerateMaze();
-            qTable = new float[mazeSize, mazeSize, 4];
+            if (qTable == null || qTable.GetLength(0) != mazeSize)
+            {
+                qTable = new float[mazeSize, mazeSize, 4];
+            }
+
 
             aiAgent = Instantiate(aiPrefab, new Vector3(startPos.x, 0.5f, startPos.y), Quaternion.identity);
 
@@ -61,7 +65,7 @@ public class MazeQLearningAI : MonoBehaviour
         // ?? 以前の迷路のオブジェクトをすべて削除（スタートを除外）
         foreach (Transform child in transform)
         {
-            if (child.gameObject.tag != "Start") // スタートオブジェクトを削除しない
+            if (child.gameObject.tag != "Start") // スタートオブジェクトは削除しない
             {
                 Destroy(child.gameObject);
             }
@@ -87,26 +91,74 @@ public class MazeQLearningAI : MonoBehaviour
         DrawMaze();
         SetupCamera();
 
-        // ?? 以前のゴールをすべて削除（1つではなく複数削除）
+        // 以前のゴールをすべて削除（1つではなく複数削除）
         GameObject[] oldGoals = GameObject.FindGameObjectsWithTag("Goal");
         foreach (GameObject oldGoal in oldGoals)
         {
             Destroy(oldGoal);
         }
 
-        // ?? 以前のスタートが消えている可能性があるため、スタートを再生成
+        // 以前のスタートが消えている可能性があるため、スタートを再生成
         if (GameObject.FindGameObjectWithTag("Start") == null)
         {
             GameObject newStart = Instantiate(startPrefab, new Vector3(startPos.x, 0.5f, startPos.y), Quaternion.identity);
-            newStart.tag = "Start"; // タグを設定
+            newStart.tag = "Start";
         }
 
-        // ?? 新しいゴールを生成し、タグを設定
+        // 新しいゴールを生成し、タグを設定
         GameObject newGoal = Instantiate(goalPrefab, new Vector3(goalPos.x, 0.5f, goalPos.y), Quaternion.identity);
-        newGoal.tag = "Goal"; // タグを設定
+        newGoal.tag = "Goal";
+
+        // 迷路が作成された後、距離マップを計算
+        CalculateDistanceMap();
     }
 
 
+    private int[,] distanceMap; // 各セルのゴールまでの最短距離を保存するマップ
+
+    void CalculateDistanceMap()
+    {
+        int width = mazeSize;
+        int height = mazeSize;
+        distanceMap = new int[width, height];
+
+        // 初期化：すべてのセルを「未探索」にする
+        for (int x = 0; x < width; x++)
+        {
+            for (int y = 0; y < height; y++)
+            {
+                distanceMap[x, y] = int.MaxValue; // 初期値として非常に大きな数を設定
+            }
+        }
+
+        Queue<Vector2Int> queue = new Queue<Vector2Int>();
+        queue.Enqueue(goalPos);
+        distanceMap[goalPos.x, goalPos.y] = 0; // ゴール地点の距離は 0
+
+        int[] dx = { 1, -1, 0, 0 };
+        int[] dy = { 0, 0, 1, -1 };
+
+        while (queue.Count > 0)
+        {
+            Vector2Int current = queue.Dequeue();
+            int currentDistance = distanceMap[current.x, current.y];
+
+            for (int i = 0; i < 4; i++)
+            {
+                int nx = current.x + dx[i];
+                int ny = current.y + dy[i];
+
+                if (nx >= 0 && ny >= 0 && nx < width && ny < height && maze[nx, ny] == 0) // 通れる道か確認
+                {
+                    if (distanceMap[nx, ny] > currentDistance + 1) // より短い距離が見つかったら更新
+                    {
+                        distanceMap[nx, ny] = currentDistance + 1;
+                        queue.Enqueue(new Vector2Int(nx, ny));
+                    }
+                }
+            }
+        }
+    }
 
 
     void DFS(int x, int y)
@@ -163,46 +215,44 @@ public class MazeQLearningAI : MonoBehaviour
         }
     }
 
+
+
     IEnumerator TrainAI()
     {
-        Dictionary<Vector2Int, int> visitedCells = new Dictionary<Vector2Int, int>(); // 訪問回数を記録
+        Dictionary<Vector2Int, int> visitedCells = new Dictionary<Vector2Int, int>();
 
         for (int episode = 0; episode < 100; episode++)
         {
             aiPos = startPos;
             aiAgent.transform.position = new Vector3(aiPos.x, 0.5f, aiPos.y);
-            visitedCells.Clear(); // 訪問履歴をリセット
+            visitedCells.Clear();
 
             while (aiPos != goalPos)
             {
                 Action action = ChooseAction(aiPos);
                 Vector2Int nextPos = aiPos + new Vector2Int(dx[(int)action], dy[(int)action]);
 
-                if (maze[nextPos.x, nextPos.y] == 1)
+                if (maze[nextPos.x, nextPos.y] == 1) // 壁に衝突
                 {
-                    continue; // 壁ならスキップ
+                    continue;
                 }
 
-                // 訪問回数をカウント
                 if (!visitedCells.ContainsKey(nextPos))
                     visitedCells[nextPos] = 0;
                 visitedCells[nextPos]++;
 
-                // 同じ場所に戻るとペナルティ
-                float revisitPenalty = visitedCells[nextPos] * -10.0f;
+                float revisitPenalty = visitedCells[nextPos] * -1.0f;
 
-                // ゴールに近づいたら報酬を増やす
-                float goalDistanceBefore = Vector2Int.Distance(aiPos, goalPos);
-                float goalDistanceAfter = Vector2Int.Distance(nextPos, goalPos);
-                float distanceReward = (goalDistanceBefore - goalDistanceAfter) * 5; // 近づくほど報酬増加
+                // 修正: ゴールまでの距離を「順路」に基づいて計算
+                float goalDistanceBefore = distanceMap[aiPos.x, aiPos.y];
+                float goalDistanceAfter = distanceMap[nextPos.x, nextPos.y];
+                float distanceReward = (goalDistanceBefore - goalDistanceAfter) * 5.0f;
 
-                // 基本報酬設定
                 float reward = -1 + distanceReward + revisitPenalty;
 
                 if (nextPos == goalPos)
-                    reward = 100; // ゴール時の報酬
+                    reward = 150;
 
-                // Q値の更新
                 float oldQ = qTable[aiPos.x, aiPos.y, (int)action];
                 float maxNextQ = Mathf.Max(qTable[nextPos.x, nextPos.y, 0],
                                            qTable[nextPos.x, nextPos.y, 1],
@@ -211,6 +261,10 @@ public class MazeQLearningAI : MonoBehaviour
 
                 qTable[aiPos.x, aiPos.y, (int)action] = oldQ + learningRate * (reward + discountFactor * maxNextQ - oldQ);
 
+             // デバッグログ
+             // Debug.Log($"Q更新: {aiPos} -> {nextPos} | Action: {action} | Old Q: {oldQ} | New Q: {qTable[aiPos.x, aiPos.y, (int)action]}");
+             // Debug.Log($"エピソード {episode}: 探索率 {explorationRate}");
+
                 aiPos = nextPos;
                 aiAgent.transform.position = new Vector3(aiPos.x, 0.5f, aiPos.y);
 
@@ -218,11 +272,11 @@ public class MazeQLearningAI : MonoBehaviour
             }
 
             explorationRate *= explorationDecay;
-            // ゴールしたらループを抜ける
             Debug.Log("AIがゴールしました！");
             yield break;
         }
     }
+
 
     void SetupCamera()
     {

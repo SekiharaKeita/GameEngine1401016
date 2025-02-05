@@ -342,7 +342,7 @@ MonoBehaviour:
   learningRate: 0.1
   discountFactor: 0.9
   explorationRate: 1
-  explorationDecay: 0.995
+  explorationDecay: 0.95
   wallPrefab: {fileID: 2714262607146506286, guid: 0c1c7683df2a75a4aa9f039a5ebaa2a8, type: 3}
   floorPrefab: {fileID: 6159267611654768825, guid: 2642bdaf540ede04299b4e6c03e01772, type: 3}
   startPrefab: {fileID: 8439085614614416410, guid: bf774636131e0274d99c436aa73b024d, type: 3}
